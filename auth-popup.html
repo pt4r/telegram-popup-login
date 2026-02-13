@@ -3,6 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src 'self';
+        script-src 'self' https://telegram.org 'unsafe-inline';
+        style-src 'self' 'unsafe-inline';
+        img-src 'self' https: data:;
+        connect-src 'self' https://telegram.org;
+        frame-ancestors 'none';
+    ">
     <title>Telegram Authentication</title>
     <style>
         * {
@@ -185,23 +193,57 @@
         (function() {
             'use strict';
 
+            // ==================== SECURITY: ENFORCE HTTPS ====================
+            if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
+                document.body.innerHTML = '<div style="padding: 2em; font-family: sans-serif; text-align: center;"><h1>🔒 HTTPS Required</h1><p>This page must be accessed via HTTPS for security reasons.</p><p>Current protocol: ' + window.location.protocol + '</p></div>';
+                throw new Error('HTTPS required for security');
+            }
+            // ================================================================
+
             // Parse URL parameters
             const urlParams = new URLSearchParams(window.location.search);
             const state = urlParams.get('state');
             const originUrl = urlParams.get('originUrl');
             const allowedOrigin = urlParams.get('allowedOrigin');
+            const botName = 'login_with_popup_poc_bot';
+
+            // ==================== SECURITY: ALLOWLIST ====================
+            // Whitelist of allowed origins that can receive credentials
+            const ALLOWED_ORIGINS = [
+                'http://localhost:5001',
+                'https://localhost:5001',
+                'http://localhost:3000',
+                'http://127.0.0.1:5001',
+                'https://pt4r.github.io'
+            ];
+            // ================================================================
 
             // Configuration
             const CONFIG = {
                 state: state,
                 originUrl: originUrl,
                 allowedOrigin: allowedOrigin,
+                botName: botName,
                 autoCloseDelay: 2000 // 2 seconds
             };
 
             let isProcessing = false;
 
-            // Show message
+            // ==================== SECURITY: INPUT SANITIZATION ====================
+            function escapeHtml(unsafe) {
+                if (typeof unsafe !== 'string') {
+                    return unsafe;
+                }
+                return unsafe
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;")
+                    .replace(/'/g, "&#039;");
+            }
+            // ================================================================
+
+            // Show message (safe - uses textContent)
             function showMessage(text, type) {
                 const messageEl = document.getElementById('message');
                 messageEl.textContent = text;
@@ -209,12 +251,12 @@
                 messageEl.style.display = 'block';
             }
 
-            // Show error with details
+            // Show error with details (sanitized)
             function showError(text, details) {
                 const messageEl = document.getElementById('message');
-                let html = `<p>${text}</p>`;
+                let html = `<p>${escapeHtml(text)}</p>`;
                 if (details) {
-                    html += `<div class="error-details"><strong>Details:</strong><br>${details}</div>`;
+                    html += `<div class="error-details"><strong>Details:</strong><br>${escapeHtml(details)}</div>`;
                 }
                 messageEl.innerHTML = html;
                 messageEl.className = 'message error';
@@ -258,6 +300,16 @@
                 } catch (e) {
                     throw new Error('Invalid allowedOrigin format');
                 }
+
+                // ==================== CRITICAL SECURITY CHECK ====================
+                // Validate allowedOrigin is in the whitelist
+                if (!ALLOWED_ORIGINS.includes(CONFIG.allowedOrigin)) {
+                    console.error('❌ Security: Unauthorized origin attempted');
+                    throw new Error('Unauthorized origin. This domain is not allowed to receive Telegram credentials.');
+                }
+                // ================================================================
+
+                console.log('✅ Security: Origin and config validated');
             }
 
             // Parse Telegram callback parameters
@@ -286,6 +338,11 @@
                     throw new Error('Parent window not found. Please ensure this page was opened as a popup.');
                 }
 
+                // Double-check allowedOrigin is still in whitelist before sending
+                if (!ALLOWED_ORIGINS.includes(CONFIG.allowedOrigin)) {
+                    throw new Error('Security error: Origin not in whitelist');
+                }
+
                 const payload = {
                     type: 'telegram-auth-response',
                     state: CONFIG.state,
@@ -293,16 +350,22 @@
                 };
 
                 try {
+                    console.log('📤 Sending credentials to validated origin');
                     window.opener.postMessage(payload, CONFIG.allowedOrigin);
+                    console.log('✅ Credentials sent successfully');
                     return true;
                 } catch (e) {
-                    throw new Error(`Failed to send message to parent: ${e.message}`);
+                    console.error('❌ Failed to send message to parent');
+                    throw new Error(`Failed to send message to parent window: ${e.message}`);
                 }
             }
 
             // Handle successful authentication
             function handleAuthSuccess(credentials) {
-                if (isProcessing) return;
+                if (isProcessing) {
+                    console.log('⚠️ Already processing, ignoring duplicate authentication attempt');
+                    return;
+                }
                 isProcessing = true;
 
                 try {
@@ -311,11 +374,30 @@
                         throw new Error('Missing required authentication fields');
                     }
 
-                    // Convert auth_date to number
+                    // Validate data types and sanitize
+                    if (typeof credentials.id !== 'string' || typeof credentials.hash !== 'string') {
+                        throw new Error('Invalid credential format');
+                    }
+
+                    // Convert auth_date to number and validate
                     credentials.auth_date = parseInt(credentials.auth_date, 10);
+                    if (isNaN(credentials.auth_date) || credentials.auth_date <= 0) {
+                        throw new Error('Invalid auth_date');
+                    }
+
+                    // Sanitize string fields to prevent XSS in parent window
+                    const sanitizedCredentials = {
+                        id: String(credentials.id),
+                        hash: String(credentials.hash),
+                        first_name: credentials.first_name ? String(credentials.first_name) : '',
+                        last_name: credentials.last_name ? String(credentials.last_name) : '',
+                        username: credentials.username ? String(credentials.username) : '',
+                        photo_url: credentials.photo_url ? String(credentials.photo_url) : '',
+                        auth_date: credentials.auth_date
+                    };
 
                     // Send to parent
-                    sendCredentialsToParent(credentials);
+                    sendCredentialsToParent(sanitizedCredentials);
 
                     // Show success message
                     showSuccess();
@@ -329,6 +411,7 @@
                     console.error('Error handling auth success:', error);
                     showError('Failed to complete authentication', error.message);
                     addCloseButton();
+                    isProcessing = false;
                 }
             }
 
@@ -339,7 +422,7 @@
 
                 const script = document.createElement('script');
                 script.src = 'https://telegram.org/js/telegram-widget.js?22';
-                script.setAttribute('data-telegram-login', 'login_with_popup_poc_bot');
+                script.setAttribute('data-telegram-login', CONFIG.botName);
                 script.setAttribute('data-size', 'large');
                 script.setAttribute('data-radius', '8');
                 script.setAttribute('data-auth-url', window.location.href.split('?')[0] + '?' + new URLSearchParams({
@@ -359,6 +442,7 @@
 
                 // Show info message
                 showMessage('Click the button above to authenticate with Telegram', 'info');
+                console.log('✅ Telegram widget rendered');
             }
 
             // Initialize
@@ -403,12 +487,15 @@
 
             // Handle unload - notify parent if authentication was not completed
             window.addEventListener('beforeunload', function() {
-                if (!isProcessing && window.opener) {
+                if (!isProcessing && window.opener && CONFIG.allowedOrigin) {
                     try {
-                        window.opener.postMessage({
-                            type: 'telegram-auth-cancelled',
-                            state: CONFIG.state
-                        }, CONFIG.allowedOrigin);
+                        // Only notify if origin is in whitelist
+                        if (ALLOWED_ORIGINS.includes(CONFIG.allowedOrigin)) {
+                            window.opener.postMessage({
+                                type: 'telegram-auth-cancelled',
+                                state: CONFIG.state
+                            }, CONFIG.allowedOrigin);
+                        }
                     } catch (e) {
                         // Ignore errors during unload
                     }
