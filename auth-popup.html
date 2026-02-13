@@ -8,8 +8,8 @@
         script-src 'self' https://telegram.org 'unsafe-inline';
         style-src 'self' 'unsafe-inline';
         img-src 'self' https: data:;
-        connect-src 'self' https://telegram.org;
-        frame-ancestors 'none';
+        connect-src 'self' https://telegram.org https://oauth.telegram.org;
+        frame-src https://oauth.telegram.org https://telegram.org;
     ">
     <title>Telegram Authentication</title>
     <style>
