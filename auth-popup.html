@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram Authentication</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            padding: 2.5em;
+            max-width: 450px;
+            width: 100%;
+            text-align: center;
+        }
+
+        h1 {
+            color: #333;
+            font-size: 24px;
+            margin-bottom: 0.5em;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 2em;
+        }
+
+        .telegram-icon {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 1.5em;
+            fill: #0088cc;
+        }
+
+        #telegram-widget-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 60px;
+            margin: 2em 0;
+        }
+
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1em;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #0088cc;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .message {
+            padding: 1em;
+            border-radius: 8px;
+            margin: 1em 0;
+            display: none;
+        }
+
+        .message.error {
+            background-color: #ffebee;
+            color: #c62828;
+            border: 1px solid #ef5350;
+        }
+
+        .message.success {
+            background-color: #e8f5e9;
+            color: #388e3c;
+            border: 1px solid #81c784;
+        }
+
+        .message.info {
+            background-color: #e3f2fd;
+            color: #1976d2;
+            border: 1px solid #90caf9;
+        }
+
+        .success-icon {
+            font-size: 48px;
+            color: #4caf50;
+            margin-bottom: 0.5em;
+        }
+
+        .close-info {
+            font-size: 14px;
+            color: #666;
+            margin-top: 1em;
+        }
+
+        .security-info {
+            margin-top: 2em;
+            padding-top: 2em;
+            border-top: 1px solid #e0e0e0;
+            font-size: 12px;
+            color: #999;
+        }
+
+        .error-details {
+            margin-top: 1em;
+            padding: 1em;
+            background: #f5f5f5;
+            border-radius: 4px;
+            font-size: 12px;
+            text-align: left;
+            overflow-wrap: break-word;
+        }
+
+        button {
+            background-color: #0088cc;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 12px 24px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            margin-top: 1em;
+        }
+
+        button:hover {
+            background-color: #007ab8;
+        }
+
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <svg class="telegram-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240">
+            <path d="M240,120 C240,186.274 186.274,240 120,240 C53.726,240 0,186.274 0,120 C0,53.726 53.726,0 120,0 C186.274,0 240,53.726 240,120 Z M98.013,144.371 L93.555,193.453 C94.777,193.453 95.313,192.925 95.968,192.278 L118.423,170.736 L164.235,204.524 C172.693,209.015 178.693,206.641 180.993,196.514 L206.375,62.626 L206.385,62.626 C209.085,49.525 201.785,44.525 193.585,47.525 L34.025,105.525 C21.625,110.025 21.825,117.525 31.825,120.525 L73.025,133.525 L169.025,76.525 C173.525,73.525 177.625,75.225 174.425,78.525 L98.013,144.371 Z"/>
+        </svg>
+
+        <h1>Telegram Authentication</h1>
+        <p class="subtitle">Please authenticate with your Telegram account</p>
+
+        <div id="telegram-widget-container">
+            <div class="loading">
+                <div class="spinner"></div>
+                <p>Loading...</p>
+            </div>
+        </div>
+
+        <div id="message" class="message"></div>
+        <div id="close-button-container"></div>
+
+        <div class="security-info">
+            <p>🔒 Secure authentication via Telegram OAuth</p>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            'use strict';
+
+            // Parse URL parameters
+            const urlParams = new URLSearchParams(window.location.search);
+            const state = urlParams.get('state');
+            const originUrl = urlParams.get('originUrl');
+            const allowedOrigin = urlParams.get('allowedOrigin');
+
+            // Configuration
+            const CONFIG = {
+                state: state,
+                originUrl: originUrl,
+                allowedOrigin: allowedOrigin,
+                autoCloseDelay: 2000 // 2 seconds
+            };
+
+            let isProcessing = false;
+
+            // Show message
+            function showMessage(text, type) {
+                const messageEl = document.getElementById('message');
+                messageEl.textContent = text;
+                messageEl.className = `message ${type}`;
+                messageEl.style.display = 'block';
+            }
+
+            // Show error with details
+            function showError(text, details) {
+                const messageEl = document.getElementById('message');
+                let html = `<p>${text}</p>`;
+                if (details) {
+                    html += `<div class="error-details"><strong>Details:</strong><br>${details}</div>`;
+                }
+                messageEl.innerHTML = html;
+                messageEl.className = 'message error';
+                messageEl.style.display = 'block';
+            }
+
+            // Show success
+            function showSuccess() {
+                const container = document.querySelector('.container');
+                container.innerHTML = `
+                    <div class="success-icon">✓</div>
+                    <h1>Authentication Successful!</h1>
+                    <p class="subtitle">Redirecting you back...</p>
+                    <div class="close-info">This window will close automatically in ${CONFIG.autoCloseDelay / 1000} seconds.</div>
+                `;
+            }
+
+            // Add manual close button
+            function addCloseButton() {
+                const container = document.getElementById('close-button-container');
+                const button = document.createElement('button');
+                button.textContent = 'Close Window';
+                button.onclick = function() {
+                    window.close();
+                };
+                container.appendChild(button);
+            }
+
+            // Validate parameters
+            function validateParameters() {
+                if (!CONFIG.state) {
+                    throw new Error('Missing required parameter: state');
+                }
+                if (!CONFIG.allowedOrigin) {
+                    throw new Error('Missing required parameter: allowedOrigin');
+                }
+
+                // Validate origin format
+                try {
+                    new URL(CONFIG.allowedOrigin);
+                } catch (e) {
+                    throw new Error('Invalid allowedOrigin format');
+                }
+            }
+
+            // Parse Telegram callback parameters
+            function parseTelegramCallback() {
+                const params = {
+                    id: urlParams.get('id'),
+                    first_name: urlParams.get('first_name'),
+                    last_name: urlParams.get('last_name'),
+                    username: urlParams.get('username'),
+                    photo_url: urlParams.get('photo_url'),
+                    auth_date: urlParams.get('auth_date'),
+                    hash: urlParams.get('hash')
+                };
+
+                // Check if we have Telegram callback data
+                if (params.id && params.hash && params.auth_date) {
+                    return params;
+                }
+
+                return null;
+            }
+
+            // Send credentials back to parent
+            function sendCredentialsToParent(credentials) {
+                if (!window.opener) {
+                    throw new Error('Parent window not found. Please ensure this page was opened as a popup.');
+                }
+
+                const payload = {
+                    type: 'telegram-auth-response',
+                    state: CONFIG.state,
+                    credentials: credentials
+                };
+
+                try {
+                    window.opener.postMessage(payload, CONFIG.allowedOrigin);
+                    return true;
+                } catch (e) {
+                    throw new Error(`Failed to send message to parent: ${e.message}`);
+                }
+            }
+
+            // Handle successful authentication
+            function handleAuthSuccess(credentials) {
+                if (isProcessing) return;
+                isProcessing = true;
+
+                try {
+                    // Validate required fields
+                    if (!credentials.id || !credentials.hash || !credentials.auth_date) {
+                        throw new Error('Missing required authentication fields');
+                    }
+
+                    // Convert auth_date to number
+                    credentials.auth_date = parseInt(credentials.auth_date, 10);
+
+                    // Send to parent
+                    sendCredentialsToParent(credentials);
+
+                    // Show success message
+                    showSuccess();
+
+                    // Auto-close window
+                    setTimeout(() => {
+                        window.close();
+                    }, CONFIG.autoCloseDelay);
+
+                } catch (error) {
+                    console.error('Error handling auth success:', error);
+                    showError('Failed to complete authentication', error.message);
+                    addCloseButton();
+                }
+            }
+
+            // Render Telegram widget
+            function renderTelegramWidget() {
+                const container = document.getElementById('telegram-widget-container');
+                container.innerHTML = ''; // Clear loading spinner
+
+                const script = document.createElement('script');
+                script.src = 'https://telegram.org/js/telegram-widget.js?22';
+                script.setAttribute('data-telegram-login', 'login_with_popup_poc_bot');
+                script.setAttribute('data-size', 'large');
+                script.setAttribute('data-radius', '8');
+                script.setAttribute('data-auth-url', window.location.href.split('?')[0] + '?' + new URLSearchParams({
+                    state: CONFIG.state,
+                    originUrl: CONFIG.originUrl || '',
+                    allowedOrigin: CONFIG.allowedOrigin
+                }).toString());
+                script.setAttribute('data-request-access', 'write');
+                script.async = true;
+
+                script.onerror = function() {
+                    showError('Failed to load Telegram widget', 'Please check your internet connection and try again.');
+                    addCloseButton();
+                };
+
+                container.appendChild(script);
+
+                // Show info message
+                showMessage('Click the button above to authenticate with Telegram', 'info');
+            }
+
+            // Initialize
+            function initialize() {
+                try {
+                    // Validate parameters
+                    validateParameters();
+
+                    // Check if we're returning from Telegram (callback)
+                    const telegramData = parseTelegramCallback();
+                    
+                    if (telegramData) {
+                        // We have authentication data - process it
+                        handleAuthSuccess(telegramData);
+                    } else {
+                        // First visit - render the widget
+                        renderTelegramWidget();
+                    }
+
+                } catch (error) {
+                    console.error('Initialization error:', error);
+                    showError('Configuration Error', error.message);
+                    addCloseButton();
+                }
+            }
+
+            // Check if window.opener exists on load
+            if (!window.opener && !parseTelegramCallback()) {
+                showError(
+                    'Invalid Access',
+                    'This page must be opened as a popup from the authentication initiator page.'
+                );
+                addCloseButton();
+            } else {
+                // Start initialization when DOM is ready
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', initialize);
+                } else {
+                    initialize();
+                }
+            }
+
+            // Handle unload - notify parent if authentication was not completed
+            window.addEventListener('beforeunload', function() {
+                if (!isProcessing && window.opener) {
+                    try {
+                        window.opener.postMessage({
+                            type: 'telegram-auth-cancelled',
+                            state: CONFIG.state
+                        }, CONFIG.allowedOrigin);
+                    } catch (e) {
+                        // Ignore errors during unload
+                    }
+                }
+            });
+
+        })();
+    </script>
+</body>
+</html>
